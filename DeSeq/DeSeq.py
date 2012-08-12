@@ -10,56 +10,52 @@ class DESeq(object):
     
     data: pandas DataFrame object, ex:
     
-    >>> from DeSeq import *
-    >>> data = read_table('./your_data.tab')
-    >>> DESeq(data)
+    >>> data = read_table('./your_data.tab', index_col=0)
 
-    First column is responsible for row names, ex:
+    conditions: pandas Series object describing experimental conditions, ex:
+
+    >>> conds = Series(["a","a","b","b"], data.columns)
+
+    You may need to add row names to your data:
+    
+    >>> data.index = ['gene_%d' % x for x in xrange(len(data.values))]
     >>> print data
-    gene_id  cond_A  cond_B
-      X4222     546      45
-      X3445     11       23 
-    
-    If your data doesn't have such a column, you should add one,
-    ex like this:
+            untreated1     untreated2     treated1     treated2
+    gene_0          56             44           11           23
+    gene_1         345            424          560          675
+    gene_2          12             45           32           17
 
-    >>> data.insert(0,'gene',['gene_%d' % x for x in xrange(len(data.values))])
-    
-    You may also need to rename some columns:
-    
-    >>> data = data.rename(columns={'Unnamed: 0':'Genes'})
-    
-    Or edit some columns like this:
+    Or create them by mixing some columns:
 
     >>> print data
     chrom     start     stop    10847_2    10847_3    10847_4
     chr 1    713615   714507         38         75        390
     chr 1    742153   742162         58         11         34
     
-    >>> new = data.chrom + ":" + data.pop('start').map(str) \
-    ...     + "-" + data.pop('stop').map(str)
-    >>> data['chrom'] = new
+    >>> data.index = data.pop('chrom')+':'+data.pop('start').map(str) \ 
+    ...     +'-'+data.pop('stop').map(str)
     >>> print data
-                  chrom    10847_2    10847_3    10847_4
+                           10847_2    10847_3    10847_4
     chr 1:713615-714507         38         75        390
     chr 1:742153-742162         58         11         34 
     """
 
-    def __init__(self, data, sizeFactors=None):
+    def __init__(self, data, conditions, sizeFactors=None):
         
         if isinstance(data, DataFrame):
             self.data = data
+            self.conditions = conditions
             self.sizeFactors = sizeFactors
         else:
             raise TypeError("Data must be a pandas DataFrame object!")
 
-    def setSizeFactors(self, omit=1, function=np.median):
+    def setSizeFactors(self, function=np.median):
         """ params: 
-            omit: omit n first columns corresponding to row names
-            function: use specific function when estimating the factors
+            function - use specific function when estimating the factors
         """
-        array = self.data.values[:,omit:].astype(float)
+        array = self.data.values
         geometricMean = st.gmean(array, axis=1)
         divided = np.divide(np.delete(array, np.where(geometricMean == 0), \
                 axis=0).T, [x for x in geometricMean if x != 0])
-        self.sizeFactors = function(divided, axis=1)
+        self.sizeFactors = dict(zip(self.data.columns, \
+                function(divided, axis=1)))
