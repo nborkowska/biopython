@@ -2,7 +2,6 @@ import numpy as np
 
 from pandas import *
 from scipy import stats as st
-import spam
 
 class DESeq(object):
     """
