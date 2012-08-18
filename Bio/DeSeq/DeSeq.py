@@ -75,6 +75,7 @@ class DSet(object):
             self.data = new
             self.conds = conds
             self.sizeFactors = sizeFactors
+            self.disps = None
         else:
             raise TypeError("Data must be a pandas DataFrame object!")
  
@@ -105,8 +106,7 @@ class DSet(object):
         return normalized.select(lambda x:self.conds.count(x[0]) > 1,
                 axis=1).groupby(axis=1, level=0)
 
-    def _estimateAndFitDispersions(self, mav, sizeFactors, *args, **kwargs):
-        xim = np.mean(1/sizeFactors)
+    def _estimateAndFitDispersions(self, mav, sizeFactors, xim):
         dispsAll = Series(
                 (mav.bVar - xim * mav.bMean)/(mav.bMean)**2,
                 index = mav.index)
@@ -121,7 +121,22 @@ class DSet(object):
                 family = sm.families.Gamma(link=sm.families.links.log)).fit()
         return dispsAll, fit
     
-    def getDispersions(self, method='per-condition', mode='max'):
+    def _calculateDispersions(self, mav, sizeFactors, testing, mode):
+        xim = np.mean(1/sizeFactors)
+        estDisps, fit = self._estimateAndFitDispersions(
+                mav, sizeFactors, xim)
+        tframe = DataFrame({'means':np.log(testing)})
+        fittedDisp= np.clip(
+                (fit.predict(tframe)-xim*testing)/testing**2,
+                1e-8, float("Inf"))
+        if mode == 'max':
+            return Series(np.maximum(estDisps, fittedDisp))
+        elif mode == 'fit-only':
+            return Series(fittedDisp)
+        else:
+            return Series(estDisp)
+
+    def setDispersions(self, method='per-condition', mode='fit-only'):
         """ Get dispersion estimates """
         
         if mode not in self.DISP_MODES:
@@ -137,6 +152,7 @@ class DSet(object):
         normalized = DSet.getNormalizedCounts(
                 self.data, self.sizeFactors)
         overallBMeans = np.mean(normalized.values, axis=1)
+        dfr = {}
 
         if method == 'pooled':
             """ select all conditions with replicates and estimate a
@@ -147,23 +163,32 @@ class DSet(object):
             bVar = groupv.sum(axis=1) / len(replicated.groups)
             meansAndVars = DataFrame({'bMean':overallBMeans,'bVar':bVar},
                     index=self.data.index) 
-            dispersions, fit = self._estimateAndFitDispersions(
-                    meansAndVars, sizeFactors)
-            testing = DataFrame({'means':np.log(overallBMeans)})
-            res = fit.predict(testing)
+            dispersions = self._calculateDispersions(
+                    meansAndVars, self.sizeFactors,
+                    overallBMeans, mode)
+            for name, df in self.data.groupby(axis=1, level=0):
+                dfr[name] = dispersions
         
         elif method == 'per-condition':
             replicated = self.selectReplicated(normalized)
             if not replicated.groups:
-                raise ValueError("None of your conditions is replicated." 
+                raise Exception("None of your conditions is replicated." 
                         + " Use method='blind' to estimate across conditions")
             for name, df in replicated:
                 sizeFactors = self.sizeFactors[name].values
                 meansAndVars = DSet.getBaseMeansAndVariances(
                         df, sizeFactors)
-                dispersions, fit = self._estimateAndFitDispersions(
-                        meansAndVars, sizeFactors)
-                testing = DataFrame({'means':np.log(overallBMeans)})
-                res = fit.predict(testing)
+                dispersions = self._calculateDispersions(
+                        meansAndVars, sizeFactors,
+                        overallBMeans, mode)
+                dfr[name] = dispersions
         else:
-            pass
+            meansAndVars = DSet.getBaseMeansAndVariances(
+                    self.data, self.sizeFactors)
+            dispersions = self._calculateDispersions(
+                    meansAndVars, self.sizeFactors,
+                    overallBMeans, mode)
+            for name, df in self.data.groupby(axis=1, level=0):
+                dfr[name] = dispersions
+
+        self.disps = DataFrame(dfr)
