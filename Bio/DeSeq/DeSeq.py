@@ -2,6 +2,7 @@ import numpy as np
 
 from pandas import *
 from scipy import stats as st
+import statsmodels.api as sm
 
 
 def dnbinom(x, size, mean):
@@ -76,22 +77,52 @@ class DSet(object):
             self.sizeFactors = sizeFactors
         else:
             raise TypeError("Data must be a pandas DataFrame object!")
-    
+ 
     def setSizeFactors(self, function=np.median):
         """ params: 
             function - use specific function when estimating the factors,
                        median is the default """
         array = self.data.values
         geometricMean = st.gmean(array, axis=1)
-        divided = np.divide(np.delete(array, np.where(geometricMean == 0), \
-                axis=0).T, [x for x in geometricMean if x != 0])
-        self.sizeFactors = function(divided, axis=1)
+        divided = np.divide(np.delete(array, np.where(geometricMean == 0),
+            axis=0).T, [x for x in geometricMean if x != 0])
+        self.sizeFactors = Series(function(divided, axis=1),
+                index=self.data.columns)
+         
+    @staticmethod
+    def getNormalizedCounts(dataframe, factors):
+        """ factors: array-like or Series """
+        return dataframe.div(factors)
+    
+    @staticmethod
+    def getBaseMeansAndVariances(dataframe, factors):
+        return DataFrame({
+            'bMean': np.mean(dataframe.values, axis=1),
+            'bVar': np.var(dataframe.values, axis=1, ddof=1)
+            }, index=dataframe.index)
 
-    def getNormalizedCounts(self):
-        return np.divide(self.values, self.sizeFactors)
-        
-    def setDispersions(self, method='per-condition', mode='max'):
-        """ Set dispersion estimates in a data frame """
+    def selectReplicated(self, normalized):
+        return normalized.select(lambda x:self.conds.count(x[0]) > 1,
+                axis=1).groupby(axis=1, level=0)
+
+    def _estimateAndFitDispersions(self, mav, sizeFactors, *args, **kwargs):
+        xim = np.mean(1/sizeFactors)
+        dispsAll = Series(
+                (mav.bVar - xim * mav.bMean)/(mav.bMean)**2,
+                index = mav.index)
+        toDel = np.where(mav.bMean.values <= 0)
+        dataframe = DataFrame({
+            'means': np.log(np.delete(mav.bMean.values, toDel)),
+            'variances':np.delete(mav.bVar.values, toDel)
+            })
+        fit = sm.GLM.from_formula(
+                formula='variances ~ means',
+                df=dataframe,
+                family = sm.families.Gamma(link=sm.families.links.log)).fit()
+        return dispsAll, fit
+    
+    def getDispersions(self, method='per-condition', mode='max'):
+        """ Get dispersion estimates """
         
         if mode not in self.DISP_MODES:
             raise ValueError("Invalid mode. Choose from %s, %s, %s." \
@@ -103,15 +134,36 @@ class DSet(object):
             raise ValueError("No size factors available. \
                     Call 'setSizeFactors' first.")
 
+        normalized = DSet.getNormalizedCounts(
+                self.data, self.sizeFactors)
+        overallBMeans = np.mean(normalized.values, axis=1)
+
         if method == 'pooled':
-            rep = self.data.groupby(lambda x: self.conds.count(x), \
-                    level=0, axis=1)
-            df = len(set(self.conds)) - len(rep.groups.get(1, []))
-            normalized = self.getNormalizedCounts()
-            bMean = np.mean(normalized)
-            print rep.groups[2]
-            pass
+            """ select all conditions with replicates and estimate a
+            single pooled empirical dispersion value """
+        
+            replicated = self.selectReplicated(normalized)
+            groupv = replicated.agg(lambda x: sum((x - np.mean(x))**2))
+            bVar = groupv.sum(axis=1) / len(replicated.groups)
+            meansAndVars = DataFrame({'bMean':overallBMeans,'bVar':bVar},
+                    index=self.data.index) 
+            dispersions, fit = self._estimateAndFitDispersions(
+                    meansAndVars, sizeFactors)
+            testing = DataFrame({'means':np.log(overallBMeans)})
+            res = fit.predict(testing)
+        
         elif method == 'per-condition':
-            pass
+            replicated = self.selectReplicated(normalized)
+            if not replicated.groups:
+                raise ValueError("None of your conditions is replicated." 
+                        + " Use method='blind' to estimate across conditions")
+            for name, df in replicated:
+                sizeFactors = self.sizeFactors[name].values
+                meansAndVars = DSet.getBaseMeansAndVariances(
+                        df, sizeFactors)
+                dispersions, fit = self._estimateAndFitDispersions(
+                        meansAndVars, sizeFactors)
+                testing = DataFrame({'means':np.log(overallBMeans)})
+                res = fit.predict(testing)
         else:
             pass
