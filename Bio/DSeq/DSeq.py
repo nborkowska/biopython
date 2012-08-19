@@ -258,8 +258,11 @@ class DSet(object):
         bmvB = DSet.getBaseMeansAndVariances(normalizedConds[condB])
         return DataFrame({
             'baseMean': meansAndVars.bMean,
+            'baseVar': meansAndVars.bVar,
             'baseMeanA': bmvA.bMean,
+            'baseVarA': bmvA.bVar,
             'baseMeanB': bmvB.bMean,
+            'baseVarB': bmvB.bVar,
             'foldChange': bmvB.bMean / bmvA.bMean,
             'log2FoldChange': np.log2( bmvB.bMean / bmvA.bMean)
             }, index=self.data.index)
