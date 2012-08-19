@@ -96,7 +96,8 @@ class DSet(object):
         return dataframe.div(factors)
     
     @staticmethod
-    def getBaseMeansAndVariances(dataframe, factors):
+    def getBaseMeansAndVariances(dataframe):
+        """ dataframe - DataFrame with normalized data """
         return DataFrame({
             'bMean': np.mean(dataframe.values, axis=1),
             'bVar': np.var(dataframe.values, axis=1, ddof=1)
@@ -123,20 +124,21 @@ class DSet(object):
     
     def _calculateDispersions(self, mav, sizeFactors, testing, mode):
         xim = np.mean(1/sizeFactors)
-        estDisps, fit = self._estimateAndFitDispersions(
+        estDisp, fit = self._estimateAndFitDispersions(
                 mav, sizeFactors, xim)
         tframe = DataFrame({'means':np.log(testing)})
         fittedDisp= np.clip(
                 (fit.predict(tframe)-xim*testing)/testing**2,
                 1e-8, float("Inf"))
         if mode == 'max':
-            return Series(np.maximum(estDisps, fittedDisp))
+            disp = np.maximum(estDisps, fittedDisp)
         elif mode == 'fit-only':
-            return Series(fittedDisp)
+            disp = fittedDisp
         else:
-            return Series(estDisp)
+            disp = estDisp
+        return Series(np.maximum(disp, 1e-8), index=mav.index)
 
-    def setDispersions(self, method='per-condition', mode='fit-only'):
+    def setDispersions(self, method='per-condition', mode='gene-only'):
         """ Get dispersion estimates """
         
         if mode not in self.DISP_MODES:
@@ -172,19 +174,19 @@ class DSet(object):
         elif method == 'per-condition':
             replicated = self.selectReplicated(normalized)
             if not replicated.groups:
-                raise Exception("None of your conditions is replicated." 
+                raise Exception("None of your conditions is replicated."
                         + " Use method='blind' to estimate across conditions")
             for name, df in replicated:
                 sizeFactors = self.sizeFactors[name].values
                 meansAndVars = DSet.getBaseMeansAndVariances(
-                        df, sizeFactors)
+                        df)
                 dispersions = self._calculateDispersions(
                         meansAndVars, sizeFactors,
                         overallBMeans, mode)
                 dfr[name] = dispersions
         else:
             meansAndVars = DSet.getBaseMeansAndVariances(
-                    self.data, self.sizeFactors)
+                    self.data)
             dispersions = self._calculateDispersions(
                     meansAndVars, self.sizeFactors,
                     overallBMeans, mode)
@@ -192,3 +194,72 @@ class DSet(object):
                 dfr[name] = dispersions
 
         self.disps = DataFrame(dfr)
+    
+    def _getpValues(self, counts, sizeFactors, disps):
+        kss = counts.sum(axis=1, level=0)
+        mus = DSet.getNormalizedCounts(counts, sizeFactors).mean(axis=1)
+        sumDisps, pvals = {}, []
+        for name, col in counts.groupby(level=0, axis=1):
+            n = mus*sizeFactors[name].sum()
+            fullVars = np.maximum(
+                    n + disps[name]*np.power(mus,2)*np.sum(
+                        np.power(sizeFactors[name].values, 2)),
+                    n*(1+1e-8)
+                    )
+            sumDisps[name] = (fullVars - n) / np.power(n, 2) 
+
+        sumDisps = DataFrame(sumDisps)
+        for index, row in kss.iterrows():
+            if all(cond == 0 for cond in kss):
+                pval=np.nan
+            else:
+                ks = range(int(row.sum())+1)
+                """ probability of all possible counts sums with 
+                the same total count """
+                ps = dnbinom(
+                        ks, 1/sumDisps.ix[index, 0],
+                        mus[index]*sizeFactors.ix[0].sum()
+                        )*dnbinom(row.sum()-ks, 1/sumDisps.ix[index,1],
+                                mus[index]*sizeFactors.ix[1].sum())
+                
+                """ probability of observed count sums """
+                pobs = dnbinom(
+                        kss.ix[index, 0], 1/sumDisps.ix[index, 0],
+                        mus[index]*sizeFactors.ix[0].sum()
+                        )*dnbinom(kss.ix[index, 1], 1/sumDisps.ix[index,1],
+                                mus[index]*sizeFactors.ix[1].sum())
+                if kss.ix[index,0]*sizeFactors.ix[1].sum() < kss.ix[index, 1]*sizeFactors.ix[0]:
+                    number = ps[:int(kss.ix[index,0]+1)]
+                else:
+                    number = ps[int(kss.ix[index,0]+1):]
+                pval = min(1, 2*sum(number)/sum(ps)) 
+            
+            pvals.append(pval)
+
+        return Series(pvals)
+
+
+    def nbinomTest(self, condA, condB):
+        if self.disps is None:
+            raise ValueError("No dispersion values available."
+                    + " Call 'setDispersions' first.")
+        if any(cond not in set(self.conds) for cond in [condA, condB]):
+            raise ValueError("No such conditions!")
+        
+        func = lambda x: x[0] in [condA, condB]
+        testingConds = self.data.select(func, axis=1)
+        sizeFactors = self.sizeFactors.select(func)
+        normalizedConds = DSet.getNormalizedCounts(testingConds, sizeFactors)
+        meansAndVars = DSet.getBaseMeansAndVariances(normalizedConds)
+        dispersions = self.disps.select(lambda x: x in [condA, condB], axis=1)
+        #p_vals = self._getpValues(testingConds, sizeFactors, dispersions)
+        p_vals = []
+        bmvA = DSet.getBaseMeansAndVariances(normalizedConds[condA])
+        bmvB = DSet.getBaseMeansAndVariances(normalizedConds[condB])
+        return DataFrame({
+            'baseMean': meansAndVars.bMean,
+            'baseMeanA': bmvA.bMean,
+            'baseMeanB': bmvB.bMean,
+            'foldChange': bmvB.bMean / bmvA.bMean,
+            'log2FoldChange': np.log2( bmvB.bMean / bmvA.bMean)
+            }, index=self.data.index)
