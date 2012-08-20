@@ -8,7 +8,7 @@ Requirements:
     statsmodels version 0.5.0 available at http://statsmodels.sourceforge.net/devel/install.html
     numpy, scipy, matplotlib
 
-Tested on python 2.7
+Tested on python 2.7, numpy 1.6.1, scipy 0.9.0
 """
 
 from DSeq import *

@@ -1,9 +1,9 @@
+import math
 import numpy as np
 
 from pandas import *
 from scipy import stats as st
 import statsmodels.api as sm
-
 
 def dnbinom(x, size, mean):
     """
@@ -11,7 +11,7 @@ def dnbinom(x, size, mean):
     with alternative parametrization
     """
     prob = size/(size+mean)
-    return st.nbinom.pmf(x, size, prob)
+    return np.exp(st.nbinom.logpmf(x, int(size), prob))
 
 
 class DSet(object):
@@ -193,7 +193,8 @@ class DSet(object):
             for name, df in self.data.groupby(axis=1, level=0):
                 dfr[name] = dispersions
 
-        self.disps = DataFrame(dfr)
+        dfr = DataFrame(dfr)
+        self.disps = dfr.fillna(1e-8)
     
     def _getpValues(self, counts, sizeFactors, disps):
         kss = counts.sum(axis=1, level=0)
@@ -206,37 +207,39 @@ class DSet(object):
                         np.power(sizeFactors[name].values, 2)),
                     n*(1+1e-8)
                     )
-            sumDisps[name] = (fullVars - n) / np.power(n, 2) 
+            sumDisps[name] = (fullVars - n) / np.power(n, 2)
 
         sumDisps = DataFrame(sumDisps)
+        sfSum = sizeFactors.sum(level=0)
         for index, row in kss.iterrows():
-            if all(cond == 0 for cond in kss):
+            if all(v == 0 for v in row.values):
                 pval=np.nan
             else:
                 ks = range(int(row.sum())+1)
                 """ probability of all possible counts sums with 
                 the same total count """
+                
                 ps = dnbinom(
                         ks, 1/sumDisps.ix[index, 0],
-                        mus[index]*sizeFactors.ix[0].sum()
+                        mus[index]*sfSum[0]
                         )*dnbinom(row.sum()-ks, 1/sumDisps.ix[index,1],
-                                mus[index]*sizeFactors.ix[1].sum())
-                
+                                mus[index]*sfSum[1])
+                        
                 """ probability of observed count sums """
                 pobs = dnbinom(
                         kss.ix[index, 0], 1/sumDisps.ix[index, 0],
-                        mus[index]*sizeFactors.ix[0].sum()
+                        mus[index]*sfSum[0]
                         )*dnbinom(kss.ix[index, 1], 1/sumDisps.ix[index,1],
-                                mus[index]*sizeFactors.ix[1].sum())
-                if kss.ix[index,0]*sizeFactors.ix[1].sum() < kss.ix[index, 1]*sizeFactors.ix[0]:
+                                mus[index]*sfSum[1])
+                
+                if kss.ix[index,0]*sfSum[1] < kss.ix[index, 1]*sfSum[1]:
                     number = ps[:int(kss.ix[index,0]+1)]
                 else:
-                    number = ps[int(kss.ix[index,0]+1):]
-                pval = min(1, 2*sum(number)/sum(ps)) 
-            
+                    number = ps[int(kss.ix[index,0]):]
+                pval = np.nanmin([1, 2*np.nansum(number)/np.nansum(ps)]) 
             pvals.append(pval)
 
-        return Series(pvals)
+        return pvals
 
 
     def nbinomTest(self, condA, condB):
@@ -252,8 +255,7 @@ class DSet(object):
         normalizedConds = DSet.getNormalizedCounts(testingConds, sizeFactors)
         meansAndVars = DSet.getBaseMeansAndVariances(normalizedConds)
         dispersions = self.disps.select(lambda x: x in [condA, condB], axis=1)
-        #p_vals = self._getpValues(testingConds, sizeFactors, dispersions)
-        p_vals = []
+        p_vals = self._getpValues(testingConds, sizeFactors, dispersions)
         bmvA = DSet.getBaseMeansAndVariances(normalizedConds[condA])
         bmvB = DSet.getBaseMeansAndVariances(normalizedConds[condB])
         return DataFrame({
@@ -263,6 +265,7 @@ class DSet(object):
             'baseVarA': bmvA.bVar,
             'baseMeanB': bmvB.bMean,
             'baseVarB': bmvB.bVar,
+            'pval': p_vals,
             'foldChange': bmvB.bMean / bmvA.bMean,
             'log2FoldChange': np.log2( bmvB.bMean / bmvA.bMean)
             }, index=self.data.index)
