@@ -1,4 +1,3 @@
-import math
 import numpy as np
 
 from pandas import *
@@ -11,7 +10,7 @@ def dnbinom(x, size, mean):
     with alternative parametrization
     """
     prob = size/(size+mean)
-    return np.exp(st.nbinom.logpmf(x, int(size), prob))
+    return np.exp(st.nbinom.logpmf(x, size, prob))
 
 
 class DSet(object):
@@ -131,7 +130,7 @@ class DSet(object):
                 (fit.predict(tframe)-xim*testing)/testing**2,
                 1e-8, float("Inf"))
         if mode == 'max':
-            disp = np.maximum(estDisps, fittedDisp)
+            disp = np.maximum(estDisp, fittedDisp)
         elif mode == 'fit-only':
             disp = fittedDisp
         else:
@@ -184,6 +183,10 @@ class DSet(object):
                         meansAndVars, sizeFactors,
                         overallBMeans, mode)
                 dfr[name] = dispersions
+            maxDisps = DataFrame(dfr).max(axis=1)
+            for name, df in normalized:
+                if not dfr.has_key(name):
+                    dfr[name] = maxDisps
         else:
             meansAndVars = DSet.getBaseMeansAndVariances(
                     self.data)
@@ -197,7 +200,7 @@ class DSet(object):
         self.disps = dfr.fillna(1e-8)
     
     def _getpValues(self, counts, sizeFactors, disps):
-        kss = counts.sum(axis=1, level=0)
+        kss = counts.sum(axis=1, level=0).dropna(axis=1,how='all')
         mus = DSet.getNormalizedCounts(counts, sizeFactors).mean(axis=1)
         sumDisps, pvals = {}, []
         for name, col in counts.groupby(level=0, axis=1):
@@ -208,9 +211,18 @@ class DSet(object):
                     n*(1+1e-8)
                     )
             sumDisps[name] = (fullVars - n) / np.power(n, 2)
-
+            #print 'mmmmmmmmmmmmmmmmmmm'
+            #print np.power(sizeFactors[name].values, 2)
+            #print sizeFactors[name].values
+            #print np.sum(np.power(sizeFactors[name].values, 2))
+            #print list((fullVars - n) / np.power(n, 2))
+            #print list(fullVars)
+            #print n #to ok
+            #print mus*sizeFactors[name].sum() #wyglada ok
+            #print np.power(n,2)
+        
         sumDisps = DataFrame(sumDisps)
-        sfSum = sizeFactors.sum(level=0)
+        sfSum = sizeFactors.sum(level=0).dropna()
         for index, row in kss.iterrows():
             if all(v == 0 for v in row.values):
                 pval=np.nan
@@ -224,7 +236,10 @@ class DSet(object):
                         mus[index]*sfSum[0]
                         )*dnbinom(row.sum()-ks, 1/sumDisps.ix[index,1],
                                 mus[index]*sfSum[1])
-                        
+                #print 'czesc 1 ps ', list(dnbinom(ks, 1/sumDisps.ix[index, 0],mus[index]*sfSum[0]))
+                #print 'czesc 2 ps ', list(dnbinom(row.sum()-ks, 1/sumDisps.ix[index,1],mus[index]*sfSum[1]))
+                #print sfSum
+
                 """ probability of observed count sums """
                 pobs = dnbinom(
                         kss.ix[index, 0], 1/sumDisps.ix[index, 0],
@@ -232,11 +247,15 @@ class DSet(object):
                         )*dnbinom(kss.ix[index, 1], 1/sumDisps.ix[index,1],
                                 mus[index]*sfSum[1])
                 
-                if kss.ix[index,0]*sfSum[1] < kss.ix[index, 1]*sfSum[1]:
+                if kss.ix[index,0]*sfSum[1] < kss.ix[index, 1]*sfSum[0]:
                     number = ps[:int(kss.ix[index,0]+1)]
                 else:
                     number = ps[int(kss.ix[index,0]):]
                 pval = np.nanmin([1, 2*np.nansum(number)/np.nansum(ps)]) 
+                #print 'nansum1 ', np.nansum(number)            
+                #print 2*np.nansum(number), np.nansum(ps)
+                #print 'nansum2 ', np.nansum(ps)
+                #print len(number)
             pvals.append(pval)
 
         return pvals
