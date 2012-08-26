@@ -1,4 +1,5 @@
 import numpy as np
+import pylab as pl
 
 from pandas import *
 from scipy import stats as st
@@ -286,3 +287,11 @@ class DSet(object):
             'foldChange': bmvB.bMean / bmvA.bMean,
             'log2FoldChange': np.log2( bmvB.bMean / bmvA.bMean)
             }, index=self.data.index)
+    
+    @staticmethod
+    def plotResults(log2foldchange, pvals):
+        pl.scatter(log2foldchange, pvals, alpha=0.2)
+        pl.yscale('log')
+        pl.ylim(1,1e-50)
+        pl.show()
+        
