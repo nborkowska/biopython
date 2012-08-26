@@ -211,16 +211,7 @@ class DSet(object):
                     n*(1+1e-8)
                     )
             sumDisps[name] = (fullVars - n) / np.power(n, 2)
-            #print 'mmmmmmmmmmmmmmmmmmm'
-            #print np.power(sizeFactors[name].values, 2)
-            #print sizeFactors[name].values
-            #print np.sum(np.power(sizeFactors[name].values, 2))
-            #print list((fullVars - n) / np.power(n, 2))
-            #print list(fullVars)
-            #print n #to ok
-            #print mus*sizeFactors[name].sum() #wyglada ok
-            #print np.power(n,2)
-        
+       
         sumDisps = DataFrame(sumDisps)
         sfSum = sizeFactors.sum(level=0).dropna()
         for index, row in kss.iterrows():
@@ -236,9 +227,6 @@ class DSet(object):
                         mus[index]*sfSum[0]
                         )*dnbinom(row.sum()-ks, 1/sumDisps.ix[index,1],
                                 mus[index]*sfSum[1])
-                #print 'czesc 1 ps ', list(dnbinom(ks, 1/sumDisps.ix[index, 0],mus[index]*sfSum[0]))
-                #print 'czesc 2 ps ', list(dnbinom(row.sum()-ks, 1/sumDisps.ix[index,1],mus[index]*sfSum[1]))
-                #print sfSum
 
                 """ probability of observed count sums """
                 pobs = dnbinom(
@@ -252,14 +240,22 @@ class DSet(object):
                 else:
                     number = ps[int(kss.ix[index,0]):]
                 pval = np.nanmin([1, 2*np.nansum(number)/np.nansum(ps)]) 
-                #print 'nansum1 ', np.nansum(number)            
-                #print 2*np.nansum(number), np.nansum(ps)
-                #print 'nansum2 ', np.nansum(ps)
-                #print len(number)
             pvals.append(pval)
 
+        return Series(pvals,index=counts.index)
+    
+    @staticmethod
+    def _BenjaminiHochberg(pvals):
+        pvals =  pvals.order(na_last=True, ascending=False).dropna()
+        l = len(pvals)
+        try:
+            previous = pvals[0]
+            for i,j in enumerate(pvals.iteritems()):
+                corrected = min(j[1]*l/(l-i),previous)
+                previous = pvals[i] = corrected
+        except:
+            pass
         return pvals
-
 
     def nbinomTest(self, condA, condB):
         if self.disps is None:
@@ -274,7 +270,8 @@ class DSet(object):
         normalizedConds = DSet.getNormalizedCounts(testingConds, sizeFactors)
         meansAndVars = DSet.getBaseMeansAndVariances(normalizedConds)
         dispersions = self.disps.select(lambda x: x in [condA, condB], axis=1)
-        p_vals = self._getpValues(testingConds, sizeFactors, dispersions)
+        p_vals = self._getpValues(testingConds, sizeFactors, dispersions) 
+        adjustedPVals = DSet._BenjaminiHochberg(p_vals)
         bmvA = DSet.getBaseMeansAndVariances(normalizedConds[condA])
         bmvB = DSet.getBaseMeansAndVariances(normalizedConds[condB])
         return DataFrame({
@@ -285,6 +282,7 @@ class DSet(object):
             'baseMeanB': bmvB.bMean,
             'baseVarB': bmvB.bVar,
             'pval': p_vals,
+            'pvalAdj': adjustedPVals,
             'foldChange': bmvB.bMean / bmvA.bMean,
             'log2FoldChange': np.log2( bmvB.bMean / bmvA.bMean)
             }, index=self.data.index)
