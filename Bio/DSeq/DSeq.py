@@ -1,5 +1,4 @@
 import numpy
-from matplotlib import pyplot as pl
 from pandas import *
 import scipy.stats
 import statsmodels.api as sm
@@ -332,21 +331,3 @@ class DSet(object):
             'foldChange': bmvB.bMean / bmvA.bMean,
             'log2FoldChange': numpy.log2( bmvB.bMean / bmvA.bMean)
             }, index=self.data.index)
-    
-    @staticmethod
-    def plotResults(log2foldchange, pvals):
-        #pl.setp(sp, edgecolors='facie')
-        pl.scatter(log2foldchange, pvals, alpha=0.2)
-        pl.axhline(y=0.01, c='r')
-        pl.yscale('log')
-        pl.ylim(1,1e-25)
-        pl.xlim(-6,6)
-        pl.ylabel('pvalue')
-        pl.xlabel('log2 fold change')
-        pl.savefig('volcano.svg')
-        pl.show()
-        mu, sigma = 100, 15
-        
-        x = mu + sigma*numpy.random.randn(10000)
-        n, bins, patches = pl.hist(x, 50, normed=1, facecolor='green', alpha=0.75)
-        pl.show()
