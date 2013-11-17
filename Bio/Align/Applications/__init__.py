@@ -14,6 +14,7 @@ from _Mafft import MafftCommandline
 from _Dialign import DialignCommandline
 from _Probcons import ProbconsCommandline
 from _TCoffee import TCoffeeCommandline
+from _Kalign import KalignCommandline
 
 #Make this explicit, then they show up in the API docs
 __all__ = ["MuscleCommandline",
@@ -24,4 +25,5 @@ __all__ = ["MuscleCommandline",
            "DialignCommandline",
            "ProbconsCommandline",
            "TCoffeeCommandline",
+           "KalignCommandline",
            ]
